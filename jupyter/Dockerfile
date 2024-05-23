@@ -21,8 +21,7 @@ USER root
 #    rm -rf /var/lib/apt/lists/*
 
 # Instale as bibliotecas Python necessárias
-RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org pymongo pandas numpy matplotlib scikit-learn seaborn streamlit streamlit_jupyter redis 
-#pyspark==${SPARK_VERSION}
+RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org pymongo pandas numpy matplotlib scikit-learn seaborn streamlit streamlit_jupyter redis pyspark jupyterlab 
 
 RUN echo "jovyan ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/jovyan
 
