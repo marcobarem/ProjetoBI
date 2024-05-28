@@ -3,10 +3,10 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, DoubleType
+from pyspark.sql.functions import col, round, max, avg, udf
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-from pyspark.sql.functions import col, round, max, avg
 
 # Configurações de conexão com o MongoDB
 username = "root"
@@ -63,6 +63,22 @@ spark = SparkSession.builder \
 # Carregar os dados do MongoDB no DataFrame do PySpark
 df = spark.read.format("mongo").schema(schema).load()
 
+# Converter colunas DoubleType para FloatType
+df = df.withColumn("danceability", col("danceability").cast(FloatType())) \
+       .withColumn("energy", col("energy").cast(FloatType())) \
+       .withColumn("loudness", col("loudness").cast(FloatType())) \
+       .withColumn("speechiness", col("speechiness").cast(FloatType())) \
+       .withColumn("acousticness", col("acousticness").cast(FloatType())) \
+       .withColumn("instrumentalness", col("instrumentalness").cast(FloatType())) \
+       .withColumn("liveness", col("liveness").cast(FloatType())) \
+       .withColumn("valence", col("valence").cast(FloatType())) \
+       .withColumn("tempo", col("tempo").cast(FloatType()))
+
+# Verificar e filtrar valores inválidos em colunas numéricas
+numeric_columns = ["danceability", "energy", "loudness", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo"]
+for column in numeric_columns:
+    df = df.filter(col(column).cast("float").isNotNull())
+
 # Mostrar esquema do DataFrame e os primeiros registros para verificação
 st.write("Esquema do DataFrame:")
 df.printSchema()
@@ -80,6 +96,25 @@ missing_columns = [col for col in expected_columns if col not in df.columns]
 if missing_columns:
     st.error(f"As seguintes colunas estão faltando no DataFrame: {missing_columns}")
     st.stop()
+
+# Use uma função UDF para converter string para double
+def safe_double_conversion(s):
+    try:
+        return float(s)
+    except ValueError:
+        return None  # ou escolha um valor padrão para erros de conversão
+
+convert_to_double = udf(safe_double_conversion, DoubleType())
+
+# Aplicando a conversão no DataFrame para colunas que precisam ser convertidas
+df = df.withColumn("genre_double", convert_to_double(col("genre")))
+
+# Filtrar os valores válidos antes do cálculo dos percentis
+df = df.filter(col("valence").isNotNull() & col("energy").isNotNull())
+
+# Certifique-se de que os valores são do tipo float
+df = df.withColumn("valence", col("valence").cast(FloatType()))
+df = df.withColumn("energy", col("energy").cast(FloatType()))
 
 # Calcular percentis 99 para valence e energy
 valence_99 = df.approxQuantile("valence", [0.99], 0.01)[0]
@@ -179,7 +214,7 @@ genre_stats = df.groupBy('genre').agg(
     avg('energy').alias('avg_energy')
 ).orderBy('avg_popularity', ascending=False)
 st.write("Estatísticas por Gênero:")
-st.write(genre_stats.show())
+genre_stats.show()
 
 # Gráfico de barras: Média de Popularidade, Danceability e Energy por Gênero
 genre_stats_pandas = genre_stats.toPandas()
@@ -192,7 +227,8 @@ st.pyplot(plt)
 # Arredondar colunas tempo e energy e criar gráfico hexbin
 df_rounded = df.withColumn('tempo_rounded', round(df['tempo'], -1)) \
                .withColumn('energy_rounded', round(df['energy'], 1))
-st.write(df_rounded.show(5))
+st.write("Dados com colunas arredondadas:")
+df_rounded.show(5)
 
 # Converter para Pandas DataFrame e criar gráfico hexbin
 df_rounded_pandas = df_rounded.select('tempo_rounded', 'energy_rounded').toPandas()

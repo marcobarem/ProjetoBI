@@ -1,9 +1,5 @@
-# main.py
-
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, avg, max, round
+from pymongo.errors import ConnectionFailure, OperationFailure
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
@@ -22,41 +18,35 @@ try:
     print("Conexão ao MongoDB estabelecida com sucesso!")
 except ConnectionFailure as e:
     print(f"Falha na conexão com o MongoDB: {e}")
+except OperationFailure as e:
+    print(f"Falha na autenticação com o MongoDB: {e}")
 
-# Iniciar uma sessão Spark com o conector MongoDB
-spark = SparkSession.builder \
-    .appName("SpotifyAnalysis") \
-    .config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.12:3.0.1") \
-    .config("spark.mongodb.input.uri", f"mongodb://admin:pass@localhost:27017/{database_name}.{collection_name}?authSource={auth_source}") \
-    .config("spark.mongodb.output.uri", f"mongodb://admin:pass@localhost:27017/{database_name}.{collection_name}?authSource={auth_source}") \
-    .getOrCreate()
-
-# Carregar os dados do MongoDB no DataFrame do PySpark
-df = spark.read.format("mongo").load()
+# Carregar os dados do MongoDB no DataFrame do pandas
+db = client[database_name]
+collection = db[collection_name]
+data = list(collection.find())
+df = pd.DataFrame(data)
 
 # Mostrar os primeiros registros do DataFrame
 print("Primeiros registros do DataFrame:")
-df.show(5)
+print(df.head())
 
 # Estatísticas descritivas
 print("Estatísticas descritivas:")
-df.describe().show()
+print(df.describe())
 
 # Calcular percentis 99 para valence e energy
-valence_99 = df.approxQuantile("valence", [0.99], 0.01)[0]
-energy_99 = df.approxQuantile("energy", [0.99], 0.01)[0]
+valence_99 = df['valence'].quantile(0.99)
+energy_99 = df['energy'].quantile(0.99)
 
 # Filtrar os dados para remover outliers extremos
-df_filtered = df.filter((col("valence") <= valence_99) & (col("energy") <= energy_99))
+df_filtered = df[(df['valence'] <= valence_99) & (df['energy'] <= energy_99)]
 print("Dados filtrados:")
-df_filtered.show(5)
-
-# Converter para Pandas DataFrame para visualização
-df_filtered_pandas = df_filtered.toPandas()
+print(df_filtered.head())
 
 # Criar gráfico hexbin
 plt.figure(figsize=(10, 6))
-hb = plt.hexbin(df_filtered_pandas['valence'], df_filtered_pandas['energy'], gridsize=50, cmap='Blues', mincnt=1)
+hb = plt.hexbin(df_filtered['valence'], df_filtered['energy'], gridsize=50, cmap='Blues', mincnt=1)
 plt.colorbar(hb, label='Contagem no Bin')
 plt.title('Análise de Sentimento Musical - Hexbin Plot com Dados Filtrados')
 plt.xlabel('Valence (Positividade)')
@@ -66,36 +56,32 @@ plt.savefig('hexbin_plot.png')
 plt.show()
 
 # Músicas mais populares por ano
-most_popular_per_year = df.groupBy('year').agg(max('popularity').alias('max_popularity')).orderBy('year')
+most_popular_per_year = df.groupby('year')['popularity'].max().reset_index()
 print("Músicas mais populares por ano:")
-most_popular_per_year.show()
+print(most_popular_per_year)
 
 # Média de danceability e energy por gênero
-avg_dance_energy_genre = df.groupBy('genre').agg(
-    avg('danceability').alias('avg_danceability'),
-    avg('energy').alias('avg_energy')
-).orderBy('avg_danceability', ascending=False)
+avg_dance_energy_genre = df.groupby('genre')[['danceability', 'energy']].mean().reset_index()
 print("Média de danceability e energy por gênero:")
-avg_dance_energy_genre.show()
+print(avg_dance_energy_genre)
 
 # Número de músicas por ano
-songs_per_year = df.groupBy('year').count().orderBy('year')
+songs_per_year = df.groupby('year').size().reset_index(name='count')
 print("Número de músicas por ano:")
-songs_per_year.show()
+print(songs_per_year)
 
 # Artistas mais populares
-most_popular_artists = df.groupBy('artist_name').agg(avg('popularity').alias('avg_popularity')).orderBy('avg_popularity', ascending=False)
+most_popular_artists = df.groupby('artist_name')['popularity'].mean().reset_index().sort_values(by='popularity', ascending=False)
 print("Artistas mais populares:")
-most_popular_artists.show(10)
+print(most_popular_artists.head(10))
 
 # Distribuição de tempo por gênero
-avg_tempo_genre = df.groupBy('genre').agg(avg('tempo').alias('avg_tempo')).orderBy('avg_tempo', ascending=False)
+avg_tempo_genre = df.groupby('genre')['tempo'].mean().reset_index().sort_values(by='tempo', ascending=False)
 print("Distribuição de tempo por gênero:")
-avg_tempo_genre.show()
+print(avg_tempo_genre)
 
 # Histograma de Popularidade
-df_pandas = df.toPandas()
-df_pandas['popularity'].hist(bins=30, figsize=(10, 6))
+df['popularity'].hist(bins=30, figsize=(10, 6))
 plt.title('Distribuição da Popularidade das Músicas')
 plt.xlabel('Popularidade')
 plt.ylabel('Frequência')
@@ -103,7 +89,7 @@ plt.savefig('popularity_histogram.png')
 plt.show()
 
 # Boxplot de danceability por gênero
-df_pandas.boxplot(column='danceability', by='genre', figsize=(12, 8), rot=90)
+df.boxplot(column='danceability', by='genre', figsize=(12, 8), rot=90)
 plt.title('Distribuição de Danceability por Gênero')
 plt.suptitle('')
 plt.xlabel('Gênero')
@@ -112,7 +98,7 @@ plt.savefig('danceability_boxplot.png')
 plt.show()
 
 # Gráfico de Dispersão de tempo vs energy
-df_pandas.plot.scatter(x='tempo', y='energy', alpha=0.5, figsize=(10, 6))
+df.plot.scatter(x='tempo', y='energy', alpha=0.5, figsize=(10, 6))
 plt.title('Relação entre Tempo e Energy')
 plt.xlabel('Tempo (BPM)')
 plt.ylabel('Energy')
@@ -121,7 +107,7 @@ plt.savefig('tempo_vs_energy_scatter.png')
 plt.show()
 
 # Heatmap de Correlações entre Atributos
-corr = df_pandas.corr()
+corr = df.corr()
 plt.figure(figsize=(12, 8))
 sns.heatmap(corr, annot=True, cmap='coolwarm', linewidths=0.5)
 plt.title('Mapa de Calor das Correlações')
@@ -129,9 +115,8 @@ plt.savefig('correlation_heatmap.png')
 plt.show()
 
 # Linha do Tempo das Músicas mais Populares por Ano
-most_popular_per_year_pandas = most_popular_per_year.toPandas()
 plt.figure(figsize=(12, 6))
-plt.plot(most_popular_per_year_pandas['year'], most_popular_per_year_pandas['max_popularity'], marker='o')
+plt.plot(most_popular_per_year['year'], most_popular_per_year['popularity'], marker='o')
 plt.title('Popularidade Máxima das Músicas por Ano')
 plt.xlabel('Ano')
 plt.ylabel('Popularidade Máxima')
@@ -140,16 +125,12 @@ plt.savefig('popularity_over_time.png')
 plt.show()
 
 # Consulta combinada: Média de Popularidade, Danceability e Energy por Gênero
-genre_stats = df.groupBy('genre').agg(
-    avg('popularity').alias('avg_popularity'),
-    avg('danceability').alias('avg_danceability'),
-    avg('energy').alias('avg_energy')
-).orderBy('avg_popularity', ascending=False)
-genre_stats.show()
+genre_stats = df.groupby('genre')[['popularity', 'danceability', 'energy']].mean().reset_index().sort_values(by='popularity', ascending=False)
+print("Média de Popularidade, Danceability e Energy por Gênero:")
+print(genre_stats)
 
 # Gráfico de barras: Média de Popularidade, Danceability e Energy por Gênero
-genre_stats_pandas = genre_stats.toPandas()
-genre_stats_pandas.plot.bar(x='genre', y=['avg_popularity', 'avg_danceability', 'avg_energy'], figsize=(14, 8))
+genre_stats.plot.bar(x='genre', y=['popularity', 'danceability', 'energy'], figsize=(14, 8))
 plt.title('Média de Popularidade, Danceability e Energy por Gênero')
 plt.xlabel('Gênero')
 plt.ylabel('Média')
@@ -157,15 +138,14 @@ plt.savefig('genre_stats.png')
 plt.show()
 
 # Arredondar colunas tempo e energy e criar gráfico hexbin
-df_rounded = df.withColumn('tempo_rounded', round(df['tempo'], -1)) \
-               .withColumn('energy_rounded', round(df['energy'], 1))
-df_rounded.show(5)
+df['tempo_rounded'] = df['tempo'].round(-1)
+df['energy_rounded'] = df['energy'].round(1)
+print("Dados arredondados:")
+print(df[['tempo_rounded', 'energy_rounded']].head())
 
-# Converter para Pandas DataFrame e criar gráfico hexbin
-df_rounded_pandas = df_rounded.select('tempo_rounded', 'energy_rounded').toPandas()
-
+# Criar gráfico hexbin com dados arredondados
 plt.figure(figsize=(10, 6))
-hb = plt.hexbin(df_rounded_pandas['tempo_rounded'], df_rounded_pandas['energy_rounded'], gridsize=30, cmap='Greens', mincnt=1)
+hb = plt.hexbin(df['tempo_rounded'], df['energy_rounded'], gridsize=30, cmap='Greens', mincnt=1)
 plt.colorbar(hb, label='Contagem no Bin')
 plt.title('Distribuição de Tempo e Energy')
 plt.xlabel('Tempo (BPM arredondado)')
