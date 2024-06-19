@@ -1,207 +1,322 @@
 import streamlit as st
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, DoubleType
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-from pyspark.sql.functions import col, round, max, avg
+from pyspark.sql.types import StructType, StructField, DoubleType, StringType
+from pyspark.sql.functions import col
 
-# Configurações de conexão com o MongoDB
-username = "root"
-password = "mongo"
-host = "localhost"
-port = 27017
-database_name = "spotify"
-collection_name = "musicas"
-auth_source = "admin"
+# Configurar Streamlit
+st.set_page_config(layout="wide")
 
-# Verificar a conexão com o MongoDB
-st.title("Análise de Dados do Spotify")
-st.write("Verificando a conexão com o MongoDB...")
+# Título e Informações Gerais
+st.title("Análise de Dados Musicais do Spotify")
+st.markdown("""
+### Integrantes: [Marco Barem]
+### Data: [28/05]
+### Disciplinas: [Inteligencia de Negócios e Big Data]
+""")
+st.markdown("## Descrição do Estudo")
+st.write("Este estudo analisa a popularidade das músicas no Spotify ao longo dos anos, examinando diversos fatores como gênero, artista, características musicais, e outros.")
 
+# Conectar ao MongoDB
 try:
-    client = MongoClient(host=host, port=port, username=username, password=password, authSource=auth_source)
-    client[auth_source].command('ping')
-    st.success("Conexão ao MongoDB estabelecida com sucesso!")
-except ConnectionFailure as e:
-    st.error(f"Falha na conexão com o MongoDB: {e}")
-    st.stop()
+    client = MongoClient("mongodb://root:mongo@localhost:27017", serverSelectionTimeoutMS=5000)
+    client.server_info()  # Isso lançará uma exceção se não puder se conectar ao servidor.
+    st.success("Conexão estabelecida com sucesso!")
+except ConnectionFailure:
+    st.error("Falha na conexão ao servidor MongoDB")
 
-# Definir esquema do DataFrame
+# Selecionar o banco de dados
+db = client['spotify']
+
+# Selecionar a coleção
+collection = db['musicas']
+
+# Iniciar sessão do Spark
+spark = SparkSession.builder.appName("SpotifyAnalysis").getOrCreate()
+
+# Definir esquema
 schema = StructType([
-    StructField("artist_name", StringType(), True),
-    StructField("track_name", StringType(), True),
-    StructField("track_id", StringType(), True),
-    StructField("popularity", IntegerType(), True),
-    StructField("year", IntegerType(), True),
+    StructField("popularity", DoubleType(), True),
+    StructField("year", DoubleType(), True),
     StructField("genre", StringType(), True),
+    StructField("artist_name", StringType(), True),
     StructField("danceability", DoubleType(), True),
     StructField("energy", DoubleType(), True),
-    StructField("key", IntegerType(), True),
-    StructField("loudness", DoubleType(), True),
-    StructField("mode", IntegerType(), True),
-    StructField("speechiness", DoubleType(), True),
     StructField("acousticness", DoubleType(), True),
+    StructField("speechiness", DoubleType(), True),
     StructField("instrumentalness", DoubleType(), True),
-    StructField("liveness", DoubleType(), True),
-    StructField("valence", DoubleType(), True),
-    StructField("tempo", DoubleType(), True),
-    StructField("duration_ms", IntegerType(), True),
-    StructField("time_signature", IntegerType(), True)
+    StructField("duration_ms", DoubleType(), True),
+    StructField("time_signature", DoubleType(), True),
+    StructField("loudness", DoubleType(), True)
 ])
 
-# Iniciar uma sessão Spark com o conector MongoDB
-spark = SparkSession.builder \
-    .appName("SpotifyAnalysis") \
-    .config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.12:3.0.1") \
-    .config("spark.mongodb.input.uri", f"mongodb://{username}:{password}@{host}:{port}/{database_name}.{collection_name}?authSource={auth_source}") \
-    .config("spark.mongodb.output.uri", f"mongodb://{username}:{password}@{host}:{port}/{database_name}.{collection_name}?authSource={auth_source}") \
-    .getOrCreate()
+# Função para carregar dados
+def load_data():
+    data = list(collection.find({}, {'_id': 0, 'popularity': 1, 'year': 1, 'genre': 1, 'artist_name': 1, 'danceability': 1, 'energy': 1, 'acousticness': 1, 'speechiness': 1, 'instrumentalness': 1, 'duration_ms': 1, 'time_signature': 1, 'loudness': 1}))
+    for item in data:
+        for key in item:
+            try:
+                item[key] = float(item[key])
+            except (ValueError, TypeError):
+                item[key] = None
+    return spark.createDataFrame(data, schema=schema)
 
-# Carregar os dados do MongoDB no DataFrame do PySpark
-df = spark.read.format("mongo").schema(schema).load()
+df = load_data()
 
-# Mostrar esquema do DataFrame e os primeiros registros para verificação
-st.write("Esquema do DataFrame:")
-df.printSchema()
-st.write("Primeiros registros do DataFrame:")
-df.show(5, truncate=False)
+# Verificar se dados foram carregados
+if df.count() == 0:
+    st.error("Nenhum dado foi carregado no DataFrame.")
+else:
+    st.success(f"{df.count()} registros carregados no DataFrame.")
 
-# Verificar se todas as colunas necessárias estão presentes
-expected_columns = [
-    "artist_name", "track_name", "track_id", "popularity", "year", "genre", "danceability",
-    "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness",
-    "liveness", "valence", "tempo", "duration_ms", "time_signature"
-]
+# Remover valores nulos
+df = df.na.drop()
 
-missing_columns = [col for col in expected_columns if col not in df.columns]
-if missing_columns:
-    st.error(f"As seguintes colunas estão faltando no DataFrame: {missing_columns}")
-    st.stop()
+# Verificar os dados carregados
+st.write("Dados Carregados (primeiros 5 registros):")
+st.write(df.limit(5).toPandas())  # Converter e mostrar os primeiros 5 registros usando Pandas
 
-# Calcular percentis 99 para valence e energy
-valence_99 = df.approxQuantile("valence", [0.99], 0.01)[0]
-energy_99 = df.approxQuantile("energy", [0.99], 0.01)[0]
+# Pergunta 1: Como a popularidade das Músicas mudou ao longo dos anos?
+st.markdown("## Pergunta 1: Como a popularidade das Músicas mudou ao longo dos anos?")
+df_popularity_year = df.filter((df.year >= 2000) & (df.year <= 2023))
 
-# Filtrar os dados para remover outliers extremos
-df_filtered = df.filter((col("valence") <= valence_99) & (col("energy") <= energy_99))
-st.write("Dados filtrados:")
-df_filtered.show(5, truncate=False)
+# Verificar o DataFrame filtrado
+st.write("Dados Filtrados por Ano (primeiros 5 registros):")
+st.write(df_popularity_year.limit(5).toPandas())  # Converter e mostrar os primeiros 5 registros usando Pandas
 
-# Converter para Pandas DataFrame para visualização
-df_filtered_pandas = df_filtered.toPandas()
+# Agrupar por ano e gênero e calcular a média de popularidade
+df_grouped = df_popularity_year.groupBy('year', 'genre').avg('popularity').orderBy('year')
 
-# Criar gráfico hexbin
-plt.figure(figsize=(10, 6))
-hb = plt.hexbin(df_filtered_pandas['valence'], df_filtered_pandas['energy'], gridsize=50, cmap='Blues', mincnt=1)
-plt.colorbar(hb, label='Contagem no Bin')
-plt.title('Análise de Sentimento Musical - Hexbin Plot com Dados Filtrados')
-plt.xlabel('Valence (Positividade)')
-plt.ylabel('Energy (Intensidade)')
-plt.grid(True)
-st.pyplot(plt)
+# Verificar os dados agrupados
+st.write("Dados Agrupados (primeiros 5 registros):")
+st.write(df_grouped.limit(5).toPandas())  # Converter e mostrar os primeiros 5 registros usando Pandas
 
-# Músicas mais populares por ano
-most_popular_per_year = df.groupBy('year').agg(max('popularity').alias('max_popularity')).orderBy('year')
-st.write("Músicas mais populares por ano:")
-most_popular_per_year.show()
+# Converter para Pandas
+genre_popularity = df_grouped.toPandas()
 
-# Média de danceability e energy por gênero
-avg_dance_energy_genre = df.groupBy('genre').agg(
-    avg('danceability').alias('avg_danceability'),
-    avg('energy').alias('avg_energy')
-).orderBy('avg_danceability', ascending=False)
-st.write("Média de danceability e energy por gênero:")
-avg_dance_energy_genre.show()
+# Verificar os dados convertidos para Pandas
+st.write("Dados Convertidos para Pandas (primeiros 5 registros):")
+st.write(genre_popularity.head())
 
-# Número de músicas por ano
-songs_per_year = df.groupBy('year').count().orderBy('year')
-st.write("Número de músicas por ano:")
-songs_per_year.show()
+# Plotar o gráfico
+fig1, ax1 = plt.subplots(figsize=(14, 10))
+sns.lineplot(data=genre_popularity, x='year', y='avg(popularity)', hue='genre', ax=ax1)
+ax1.set_title('Média de Popularidade das Músicas por Gênero ao Longo dos Anos (2000 em diante)')
+ax1.set_xlabel('Ano')
+ax1.set_ylabel('Média de Popularidade')
+ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), ncol=2)  # Ajuste da legenda para duas colunas
+st.pyplot(fig1)
 
-# Artistas mais populares
-most_popular_artists = df.groupBy('artist_name').agg(avg('popularity').alias('avg_popularity')).orderBy('avg_popularity', ascending=False)
-st.write("Artistas mais populares:")
-most_popular_artists.show(10)
+st.markdown("""
+## Conclusão
+### Como a popularidade das Músicas mudou ao longo dos anos?
 
-# Distribuição de tempo por gênero
-avg_tempo_genre = df.groupBy('genre').agg(avg('tempo').alias('avg_tempo')).orderBy('avg_tempo', ascending=False)
-st.write("Distribuição de tempo por gênero:")
-avg_tempo_genre.show()
+O gráfico mostra que a popularidade das músicas, em média, tem aumentado ao longo dos anos. Gêneros como Pop, Rock e Dance têm mantido uma popularidade alta constante, enquanto outros gêneros apresentam variações. Isso indica uma tendência de crescimento na aceitação de uma variedade de gêneros musicais ao longo do tempo.
+""")
 
-# Histograma de Popularidade
-df_pandas = df.toPandas()
-df_pandas['popularity'].hist(bins=30, figsize=(10, 6))
-plt.title('Distribuição da Popularidade das Músicas')
-plt.xlabel('Popularidade')
-plt.ylabel('Frequência')
-st.pyplot(plt)
+# Pergunta 2: Quais gêneros são mais populares?
+st.markdown("## Pergunta 2: Quais gêneros são mais populares?")
+top_genres = df.groupBy('genre').avg('popularity').orderBy('avg(popularity)', ascending=False).limit(20)
+top_genres_pd = top_genres.toPandas()
+fig2, ax2 = plt.subplots(figsize=(10, 8))
+sns.barplot(data=top_genres_pd, x='avg(popularity)', y='genre', ax=ax2)
+ax2.set_title('Top 20 Gêneros Musicais por Popularidade Média')
+ax2.set_xlabel('Popularidade')
+ax2.set_ylabel('Gênero')
+st.pyplot(fig2)
 
-# Boxplot de danceability por gênero
-df_pandas.boxplot(column='danceability', by='genre', figsize=(12, 8), rot=90)
-plt.title('Distribuição de Danceability por Gênero')
-plt.suptitle('')
-plt.xlabel('Gênero')
-plt.ylabel('Danceability')
-st.pyplot(plt)
+st.markdown("""
+## Conclusão
+### Quais gêneros são mais populares?
 
-# Gráfico de Dispersão de tempo vs energy
-df_pandas.plot.scatter(x='tempo', y='energy', alpha=0.5, figsize=(10, 6))
-plt.title('Relação entre Tempo e Energy')
-plt.xlabel('Tempo (BPM)')
-plt.ylabel('Energy')
-plt.grid(True)
-st.pyplot(plt)
+Os gêneros mais populares são Pop, Rock e Dance, com o Pop destacando-se como o gênero de maior popularidade média. Outros gêneros como Metal, Sad, e Folk também mostram alta popularidade, indicando uma diversidade de preferências musicais entre os ouvintes.
+""")
 
-# Heatmap de Correlações entre Atributos
-corr = df_pandas.corr()
-plt.figure(figsize=(12, 8))
-sns.heatmap(corr, annot=True, cmap='coolwarm', linewidths=0.5)
-plt.title('Mapa de Calor das Correlações')
-st.pyplot(plt)
+# Pergunta 3: Quais artistas têm a maior quantidade de músicas populares?
+st.markdown("## Pergunta 3: Quais artistas têm a maior quantidade de músicas populares?")
+top_artists = df.groupBy('artist_name').count().orderBy('count', ascending=False).limit(20)
+top_artists_pd = top_artists.toPandas()
+fig3, ax3 = plt.subplots(figsize=(10, 8))
+sns.barplot(data=top_artists_pd, x='count', y='artist_name', ax=ax3)
+ax3.set_title('Top 20 Artistas com Mais Músicas Populares')
+ax3.set_xlabel('Número de Músicas Populares')
+ax3.set_ylabel('Artista')
+st.pyplot(fig3)
 
-# Linha do Tempo das Músicas mais Populares por Ano
-most_popular_per_year_pandas = most_popular_per_year.toPandas()
-plt.figure(figsize=(12, 6))
-plt.plot(most_popular_per_year_pandas['year'], most_popular_per_year_pandas['max_popularity'], marker='o')
-plt.title('Popularidade Máxima das Músicas por Ano')
-plt.xlabel('Ano')
-plt.ylabel('Popularidade Máxima')
-plt.grid(True)
-st.pyplot(plt)
+st.markdown("""
+## Conclusão
+### Quais artistas têm a maior quantidade de músicas populares?
 
-# Consulta combinada: Média de Popularidade, Danceability e Energy por Gênero
-genre_stats = df.groupBy('genre').agg(
-    avg('popularity').alias('avg_popularity'),
-    avg('danceability').alias('avg_danceability'),
-    avg('energy').alias('avg_energy')
-).orderBy('avg_popularity', ascending=False)
-st.write("Estatísticas por Gênero:")
-st.write(genre_stats.show())
+Artistas como Hans Zimmer, Glee Cast, e Pritam lideram em número de músicas populares. A presença de uma mistura de artistas de trilhas sonoras, bandas e artistas solo mostra a diversidade nas preferências dos ouvintes.
+""")
 
-# Gráfico de barras: Média de Popularidade, Danceability e Energy por Gênero
-genre_stats_pandas = genre_stats.toPandas()
-genre_stats_pandas.plot.bar(x='genre', y=['avg_popularity', 'avg_danceability', 'avg_energy'], figsize=(14, 8))
-plt.title('Média de Popularidade, Danceability e Energy por Gênero')
-plt.xlabel('Gênero')
-plt.ylabel('Média')
-st.pyplot(plt)
+# Pergunta 4: Existe uma correlação entre danceabilidade e a popularidade das músicas?
+st.markdown("## Pergunta 4: Existe uma correlação entre danceabilidade e a popularidade das músicas?")
+correlation_danceability = df.corr('danceability', 'popularity')
+st.write(f'Correlação entre Danceabilidade e Popularidade: {correlation_danceability}')
 
-# Arredondar colunas tempo e energy e criar gráfico hexbin
-df_rounded = df.withColumn('tempo_rounded', round(df['tempo'], -1)) \
-               .withColumn('energy_rounded', round(df['energy'], 1))
-st.write(df_rounded.show(5))
+sample_df = df.sample(False, 0.1).toPandas()  # Amostra de 10% dos dados
+fig4, ax4 = plt.subplots(figsize=(10, 6))
+sns.scatterplot(x='danceability', y='popularity', data=sample_df, alpha=0.7, ax=ax4)
+sns.regplot(x='danceability', y='popularity', data=sample_df, scatter=False, color='red', ax=ax4)
+ax4.set_xlabel('Danceabilidade')
+ax4.set_ylabel('Popularidade')
+ax4.set_title('Correlação entre Danceabilidade e Popularidade')
+st.pyplot(fig4)
 
-# Converter para Pandas DataFrame e criar gráfico hexbin
-df_rounded_pandas = df_rounded.select('tempo_rounded', 'energy_rounded').toPandas()
+st.markdown("""
+## Conclusão
+### Existe uma correlação entre danceabilidade e a popularidade das músicas?
 
-plt.figure(figsize=(10, 6))
-hb = plt.hexbin(df_rounded_pandas['tempo_rounded'], df_rounded_pandas['energy_rounded'], gridsize=30, cmap='Greens', mincnt=1)
-plt.colorbar(hb, label='Contagem no Bin')
-plt.title('Distribuição de Tempo e Energy')
-plt.xlabel('Tempo (BPM arredondado)')
-plt.ylabel('Energy (arredondado)')
-plt.grid(True)
-st.pyplot(plt)
+A correlação entre danceabilidade e popularidade é fraca, sugerindo que a capacidade de uma música para dançar não é um fator significativo na determinação de sua popularidade.
+""")
+
+
+
+# Pergunta 5: Como a energia das músicas influencia sua popularidade?
+st.markdown("## Pergunta 5: Como a energia das músicas influencia sua popularidade?")
+correlation_energy = df.corr('energy', 'popularity')
+st.write(f'Correlação entre Energia e Popularidade: {correlation_energy}')
+
+fig5, ax5 = plt.subplots(figsize=(10, 6))
+sns.scatterplot(x='energy', y='popularity', data=sample_df, alpha=0.7, ax=ax5)
+sns.regplot(x='energy', y='popularity', data=sample_df, scatter=False, color='red', ax=ax5)
+ax5.set_xlabel('Energia')
+ax5.set_ylabel('Popularidade')
+ax5.set_title('Correlação entre Energia e Popularidade')
+st.pyplot(fig5)
+
+st.markdown("""
+## Conclusão
+### Como a energia das músicas influencia sua popularidade?
+
+A correlação entre energia e popularidade é praticamente inexistente, indicando que a energia de uma música não tem um impacto significativo na sua popularidade.
+""")
+
+# Pergunta 6: Quais são as características comuns das músicas mais populares em termos de acousticness, speechiness e instrumentalness?
+st.markdown("## Pergunta 6: Quais são as características comuns das músicas mais populares em termos de acousticness, speechiness e instrumentalness?")
+
+# Calcular o 75º percentil de popularidade para identificar músicas populares
+popularity_values = df.select('popularity').rdd.flatMap(lambda x: x).collect()
+if len(popularity_values) > 0:
+    popularity_75th_percentile = df.approxQuantile('popularity', [0.75], 0.01)[0]
+    st.write(f"75º Percentil da Popularidade: {popularity_75th_percentile}")
+
+    # Filtrar as músicas populares
+    popular_songs = df.filter(col('popularity') > popularity_75th_percentile)
+
+    # Descrever as características das músicas populares
+    stats = popular_songs.select('acousticness', 'speechiness', 'instrumentalness').describe().toPandas()
+    st.write(stats)
+
+    # Visualizar as características com boxplots
+    fig6, axes6 = plt.subplots(1, 3, figsize=(18, 6))
+    sns.boxplot(y=popular_songs.select('acousticness').toPandas()['acousticness'], ax=axes6[0]).set_title('Acousticness')
+    sns.boxplot(y=popular_songs.select('speechiness').toPandas()['speechiness'], ax=axes6[1]).set_title('Speechiness')
+    sns.boxplot(y=popular_songs.select('instrumentalness').toPandas()['instrumentalness'], ax=axes6[2]).set_title('Instrumentalness')
+    fig6.suptitle('Características Comuns das Músicas Mais Populares')
+    st.pyplot(fig6)
+else:
+    st.error("Não foi possível calcular o 75º percentil porque a coluna 'popularity' está vazia.")
+
+
+# Filtrar as músicas populares
+popular_songs = df.filter(col('popularity') > popularity_75th_percentile)
+
+# Descrever as características das músicas populares
+stats = popular_songs.select('acousticness', 'speechiness', 'instrumentalness').describe().toPandas()
+st.write(stats)
+
+# Visualizar as características com boxplots
+fig6, axes6 = plt.subplots(1, 3, figsize=(18, 6))
+sns.boxplot(y=popular_songs.select('acousticness').toPandas()['acousticness'], ax=axes6[0]).set_title('Acousticness')
+sns.boxplot(y=popular_songs.select('speechiness').toPandas()['speechiness'], ax=axes6[1]).set_title('Speechiness')
+sns.boxplot(y=popular_songs.select('instrumentalness').toPandas()['instrumentalness'], ax=axes6[2]).set_title('Instrumentalness')
+fig6.suptitle('Características Comuns das Músicas Mais Populares')
+st.pyplot(fig6)
+
+st.markdown("""
+## Conclusão
+### Quais são as características comuns das músicas mais populares em termos de acousticness, speechiness e instrumentalness?
+
+As músicas mais populares tendem a ter valores moderados de acousticness e speechiness, enquanto a instrumentalness é geralmente baixa. Isso sugere que músicas com uma combinação equilibrada de elementos acústicos e vocais são mais populares.
+""")
+
+# Pergunta 7: Qual é a distribuição de popularidade por ano?
+st.markdown("## Pergunta 7: Qual é a distribuição de popularidade por ano?")
+df_popularity_year = df.filter((col('year') >= 2000) & (col('year') <= 2023))
+fig7, ax7 = plt.subplots(figsize=(14, 10))
+sns.boxplot(data=df_popularity_year.toPandas(), x='year', y='popularity', ax=ax7)
+ax7.set_title('Distribuição de Popularidade por Ano (2000-2023)')
+ax7.set_xlabel('Ano')
+ax7.set_ylabel('Popularidade')
+st.pyplot(fig7)
+
+st.markdown("""
+## Conclusão
+### Qual é a distribuição de popularidade por ano?
+
+A popularidade das músicas tem aumentado consistentemente ao longo dos anos, com uma maior diversidade de músicas populares em anos mais recentes.
+""")
+
+# Pergunta 8: Quais são os tempos de assinatura mais comuns em músicas populares?
+st.markdown("## Pergunta 8: Quais são os tempos de assinatura mais comuns em músicas populares?")
+fig8, ax8 = plt.subplots(figsize=(12, 6))
+sns.countplot(data=popular_songs.toPandas(), x='time_signature', ax=ax8)
+ax8.set_title('Tempos de Assinatura Mais Comuns em Músicas Populares')
+ax8.set_xlabel('Time Signature')
+ax8.set_ylabel('Count')
+st.pyplot(fig8)
+
+st.markdown("""
+## Conclusão
+### Quais são os tempos de assinatura mais comuns em músicas populares?
+
+A maioria das músicas populares tem uma assinatura de tempo de 4/4, que é o tempo mais comum na música popular. Outros tempos de assinatura são muito menos frequentes.
+""")
+
+# Pergunta 9: Existe uma correlação entre o tempo de lançamento da música e sua popularidade futura?
+st.markdown("## Pergunta 9: Existe uma correlação entre o tempo de lançamento da música e sua popularidade futura?")
+df_popularity_year = df.filter((col('year') >= 2000) & (col('year') <= 2023))
+correlation_year_popularity = df_popularity_year.corr('year', 'popularity')
+st.write(f'Correlação entre o ano de lançamento e a popularidade: {correlation_year_popularity}')
+
+fig9, ax9 = plt.subplots(figsize=(14, 10))
+sns.scatterplot(data=df_popularity_year.toPandas(), x='year', y='popularity', alpha=0.5, ax=ax9, label='Músicas Individuais')
+sns.lineplot(data=df_popularity_year.groupBy('year').avg('popularity').orderBy('year').toPandas(), x='year', y='avg(popularity)', color='red', ax=ax9, label='Média Anual')
+ax9.set_title(f'Correlação entre Ano de Lançamento e Popularidade das Músicas (2000-2023)\nCorrelação: {correlation_year_popularity}')
+ax9.set_xlabel('Ano de Lançamento')
+ax9.set_ylabel('Popularidade')
+ax9.legend()
+st.pyplot(fig9)
+
+st.markdown("""
+## Conclusão
+### Existe uma correlação entre o tempo de lançamento da música e sua popularidade futura?
+
+A correlação entre o ano de lançamento e a popularidade é positiva, embora moderada. Isso sugere que músicas lançadas mais recentemente tendem a ser ligeiramente mais populares.
+""")
+
+# Pergunta 10: Qual a correlação entre loudness e popularidade das músicas?
+st.markdown("## Pergunta 10: Qual a correlação entre loudness e popularidade das músicas?")
+correlation_loudness = df.corr('loudness', 'popularity')
+st.write(f'Correlação entre Loudness e Popularidade: {correlation_loudness}')
+
+fig10, ax10 = plt.subplots(figsize=(10, 6))
+sns.scatterplot(x='loudness', y='popularity', data=sample_df, alpha=0.7, ax=ax10)
+sns.regplot(x='loudness', y='popularity', data=sample_df, scatter=False, color='red', ax=ax10)
+ax10.set_xlabel('Loudness (dB)')
+ax10.set_ylabel('Popularidade')
+ax10.set_title('Correlação entre Loudness e Popularidade')
+st.pyplot(fig10)
+
+st.markdown("""
+## Conclusão
+### Qual a correlação entre loudness e popularidade das músicas?
+
+A correlação entre loudness e popularidade é fraca, sugerindo que a intensidade sonora de uma música não tem um impacto significativo na sua popularidade.
+""")

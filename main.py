@@ -14,15 +14,15 @@ st.set_page_config(layout="wide")
 # Título e Informações Gerais
 st.title("Análise de Dados Musicais do Spotify")
 st.markdown("""
-### Integrantes: [Marco Barem]
+### Integrantes: [Marco Barem, Mario Cesar, Amanda Pina]
 ### Data: [28/05]
-### Disciplinas: [Inteligencia de Negócios e Big Data]
+### Disciplinas: [Inteligencia de Negócios]
 """)
 st.markdown("## Descrição do Estudo")
 st.write("Este estudo analisa a popularidade das músicas no Spotify ao longo dos anos, examinando diversos fatores como gênero, artista, características musicais, e outros.")
 
 try:
-    client = MongoClient("mongodb://root:mongo@localhost:27017", serverSelectionTimeoutMS=5000)
+    client = MongoClient("mongodb://root:mongo@localhost:27020", serverSelectionTimeoutMS=5000)
     client.server_info()  # Isso lançará uma exceção se não puder se conectar ao servidor.
     print("Conexão estabelecida com sucesso!")
 
@@ -95,15 +95,27 @@ st.markdown("""
 Os gêneros mais populares são Pop, Rock e Dance, com o Pop destacando-se como o gênero de maior popularidade média. Outros gêneros como Metal, Sad, e Folk também mostram alta popularidade, indicando uma diversidade de preferências musicais entre os ouvintes.
 """)
 
+# Calcular a popularidade média global
+media_global_popularidade = df['popularity'].mean()
+
+# Filtrar músicas populares (acima da média global)
+musicas_populares = df[df['popularity'] > media_global_popularidade]
+
+# Contar o número de músicas populares por artista
+artistas_count = musicas_populares['artist_name'].value_counts().reset_index()
+artistas_count.columns = ['artist_name', 'count']
+
+# Filtrar os top 20 artistas com mais músicas populares
+top_20_artistas = artistas_count.head(20)
+
 # Pergunta 3: Quais artistas têm a maior quantidade de músicas populares?
-st.markdown("## Pergunta 3: Quais artistas têm a maior quantidade de músicas populares?")
-top_artists = df.groupby('artist_name').size().nlargest(20).reset_index(name='count')
-fig3, ax3 = plt.subplots(figsize=(10, 8))
-sns.barplot(data=top_artists, x='count', y='artist_name', ax=ax3)
-ax3.set_title('Top 20 Artistas com Mais Músicas Populares')
-ax3.set_xlabel('Número de Músicas Populares')
-ax3.set_ylabel('Artista')
-st.pyplot(fig3)
+st.markdown("## Pergunta: Quais artistas têm a maior quantidade de músicas populares?")
+fig, ax = plt.subplots(figsize=(10, 12))  # Aumentar a altura para 12
+sns.barplot(x='count', y='artist_name', data=top_20_artistas, ax=ax)
+ax.set_title('Top 20 Artistas com Mais Músicas Populares')
+ax.set_xlabel('Número de Músicas Populares')
+ax.set_ylabel('Artista')
+st.pyplot(fig)
 
 st.markdown("""
 ## Conclusão

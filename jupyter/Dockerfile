@@ -2,7 +2,7 @@
 FROM jupyter/base-notebook:latest
 
 # Define variáveis de ambiente para o Spark
-ENV SPARK_VERSION=3.5.1 \
+ENV SPARK_VERSION=3.4.3 \
     HADOOP_VERSION=3 \
     SPARK_HOME=/usr/local/spark \
     PATH=$SPARK_HOME/bin:$PATH
@@ -22,7 +22,7 @@ RUN apt-get update && \
 
 
 # Instale as bibliotecas Python necessárias
-RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org pymongo pandas numpy matplotlib scikit-learn seaborn streamlit streamlit_jupyter redis plotly ipywidgets pyspark==${SPARK_VERSION} jupyter_contrib_nbextensions statsmodels
+RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org pymongo pandas numpy matplotlib scikit-learn seaborn streamlit streamlit_jupyter redis plotly ipywidgets pyspark jupyter_contrib_nbextensions statsmodels
 #pyspark==${SPARK_VERSION}
 
 # Instale e habilite nbformat e outras dependências Jupyter
